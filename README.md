@@ -12,6 +12,7 @@
 - **Fork:** [DiazSk/lychee](https://github.com/DiazSk/lychee)
 - **Issue:** [#2128 — Use GitHub API for certain fragment checks](https://github.com/lycheeverse/lychee/issues/2128)
 - **Language:** Rust
+- **Working Branch:** [fix/issue-2128-readme-api](https://github.com/DiazSk/lychee/tree/fix/issue-2128-readme-api)
 
 ---
 
@@ -35,16 +36,19 @@ Left a comment on the issue introducing myself — `@mre` confirmed the scope, p
 
 ---
 
-## Implementation Plan (Phase II Preview)
+## Solution Plan
 
-The contribution will add a new quirk in `lychee-lib/src/quirks/mod.rs` that:
+The contribution adds a new quirk in `lychee-lib/src/quirks/mod.rs`. Below is the step-by-step engineering roadmap derived from maintainer directives.
 
-1. Matches URLs of the form `github.com/{owner}/{repo}[/tree/{branch}]#readme` using the regex:
-   ```
-   ^https://github\.com/(?<owner>[^/]+)/(?<repo>[^/]+)(?:/tree/(?<branch>[^/]+))?#readme$
-   ```
-2. Rewrites the URL to the GitHub API endpoint: `https://api.github.com/repos/{owner}/{repo}/readme`
-3. Returns a `200` response as success, skipping further fragment resolution
+### Step 1 — Regex Detection
+
+Compile the following pattern (via `once_cell` or `lazy_static`) to detect eligible GitHub `#readme` URLs:
+
+```
+^https://github\.com/(?<owner>[^/]+)/(?<repo>[^/]+)(?:/tree/(?<branch>[^/]+))?#readme$
+```
+
+This matches both `github.com/{owner}/{repo}#readme` and `github.com/{owner}/{repo}/tree/{branch}#readme`, and rejects anything that is not a root-level `#readme` fragment (e.g., blob paths, other fragments).
 
 **Test cases (per maintainer guidance):**
 
@@ -55,6 +59,78 @@ The contribution will add a new quirk in `lychee-lib/src/quirks/mod.rs` that:
 | `https://github.com/lycheeverse/lychee/blob/main/README.md#readme` | ❌ No match |
 | `https://github.com/lycheeverse/lychee#installation` | ❌ No match |
 
+### Step 2 — URL Rewrite
+
+Extract the `owner` and `repo` named captures from the regex match and construct the GitHub REST API endpoint:
+
+```
+https://api.github.com/repos/{owner}/{repo}/readme
+```
+
+The `branch` capture is intentionally discarded — the default README endpoint returns the repository's default branch README, which is the semantically correct target for a `#readme` fragment check.
+
+### Step 3 — HTTP Request via lychee's Existing Client
+
+Use lychee's existing `GITHUB_TOKEN`-aware HTTP `Client` (already injects auth headers when the token is present) — no new HTTP client or `octocrab` dependency is needed, keeping build times low per `@katrinafyi`'s directive.
+
+Issue a **`GET` request** (not `HEAD`) to the API URL. GitHub's `/readme` endpoint is optimized for GET and returns lightweight metadata JSON; HEAD may return inconsistent status codes depending on repository visibility.
+
+The request must include the header:
+
+```
+Accept: application/vnd.github.v3+json
+```
+
+### Step 4 — 200 OK Bypasses Fragment Checking
+
+If the API returns `200 OK`, return `Status::Ok` immediately and **do not** proceed to HTML fragment resolution. A 200 from the README endpoint is sufficient proof that the `#readme` link is valid — the fragment itself names the README resource, not an anchor within a page.
+
+Non-200 responses (404 for missing repo, 403 for private/forbidden) propagate as link failures through lychee's normal error path.
+
+### Step 5 — Unit Tests
+
+Add unit tests in `quirks/mod.rs` covering the four maintainer-specified match cases above. Existing test cases must remain intact.
+
+---
+
+## Reproduction Steps
+
+### Prerequisites
+
+- Rust toolchain installed (`rustup`, stable channel)
+- lychee cloned from upstream
+
+### 1. Clone the upstream repo
+
+```bash
+git clone https://github.com/lycheeverse/lychee.git
+cd lychee
+```
+
+### 2. Create a test input file
+
+```bash
+cat > /tmp/test-readme-links.md << 'EOF'
+# Test: GitHub #readme fragment links
+
+- [lychee readme](https://github.com/lycheeverse/lychee#readme)
+- [lychee main branch readme](https://github.com/lycheeverse/lychee/tree/main#readme)
+- [non-readme fragment](https://github.com/lycheeverse/lychee#installation)
+EOF
+```
+
+### 3. Build and run lychee with verbose output
+
+```bash
+cargo build --release -p lychee
+./target/release/lychee \
+  --verbose \
+  --no-progress \
+  /tmp/test-readme-links.md
+```
+
+**What to observe (current behavior):** Run without a `GITHUB_TOKEN` to force the rate-limit issue quickly — GitHub returns HTTP 429 or 403 after a handful of unauthenticated requests against the HTML pages. The `--verbose` logs show lychee fetching the full GitHub HTML page (`https://github.com/lycheeverse/lychee`) and attempting to locate the `#readme` anchor in the response body. Even when authenticated, the verbose logs prove lychee is downloading full HTML payloads instead of calling the lightweight API JSON endpoint. With the fix applied, the same URLs instead call `https://api.github.com/repos/lycheeverse/lychee/readme` (with `Accept: application/vnd.github.v3+json`) and return immediately on `200 OK`.
+
 ---
 
 ## Progress Log
@@ -62,8 +138,8 @@ The contribution will add a new quirk in `lychee-lib/src/quirks/mod.rs` that:
 | Phase | Status | Notes |
 |-------|--------|-------|
 | Phase I — Issue Selection | ✅ Complete | Issue #2128 selected, fork created, comment posted, maintainer confirmed |
-| Phase II — Reproduce & Plan | 🔄 In Progress | Setting up local Rust dev environment |
-| Phase III — Implementation | ⏳ Upcoming | Code changes in `quirks/mod.rs` |
+| Phase II — Reproduce & Plan | ✅ Complete | Reproduction steps documented, solution plan finalized with maintainer directives |
+| Phase III — Implementation | 🔄 In Progress | Code changes in `quirks/mod.rs` |
 | Phase IV — PR Submission | ⏳ Upcoming | Submit PR to `lycheeverse/lychee` |
 
 ---
