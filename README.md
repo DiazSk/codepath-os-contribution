@@ -207,7 +207,7 @@ curl -s -o /dev/null -w "%{http_code}" \
 | Phase I — Issue Selection | ✅ Complete | Issue #2128 selected, fork created, comment posted, maintainer confirmed |
 | Phase II — Reproduce & Plan | ✅ Complete | Reproduction steps documented, solution plan finalized with maintainer directives |
 | Phase III — Implementation | ✅ Complete | `quirks/mod.rs` updated, 4 new tests, branch pushed, PR submitted to upstream |
-| Phase IV — PR Submission | 🔄 In Progress | PR open at lycheeverse/lychee, awaiting maintainer review |
+| Phase IV — PR Submission | 🔄 In Progress | [PR #2239](https://github.com/lycheeverse/lychee/pull/2239) open, awaiting maintainer review |
 
 ---
 
@@ -216,5 +216,7 @@ curl -s -o /dev/null -w "%{http_code}" \
 - [lycheeverse/lychee GitHub repo](https://github.com/lycheeverse/lychee)
 - [Issue #2128](https://github.com/lycheeverse/lychee/issues/2128)
 - [My fork: DiazSk/lychee](https://github.com/DiazSk/lychee)
+- [Working branch: fix/issue-2128-readme-api](https://github.com/DiazSk/lychee/tree/fix/issue-2128-readme-api)
+- [**PR #2239** — fix(quirks): check GitHub #readme fragments via REST API](https://github.com/lycheeverse/lychee/pull/2239)
 - [My comment on the issue](https://github.com/lycheeverse/lychee/issues/2128)
 - [lychee CONTRIBUTING.md](https://github.com/lycheeverse/lychee/blob/master/CONTRIBUTING.md)
