@@ -133,14 +133,81 @@ cargo build --release -p lychee
 
 ---
 
+## Implementation Summary
+
+**File changed:** [`lychee-lib/src/quirks/mod.rs`](https://github.com/DiazSk/lychee/blob/fix/issue-2128-readme-api/lychee-lib/src/quirks/mod.rs)
+
+The change adds one static regex and one new `Quirk` struct to `Quirks::default()` — no new files, no new dependencies, no new imports (all required types were already in scope).
+
+### What was added
+
+**Static regex pattern** (inserted after the existing `GITHUB_BLOB_*` patterns):
+
+```rust
+static GITHUB_README_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^https://github\.com/(?<owner>[^/]+)/(?<repo>[^/]+)(?:/tree/(?<branch>[^/]+))?#readme$")
+        .unwrap()
+});
+```
+
+**New quirk** (appended to `Quirks::default()`):
+
+```rust
+Quirk {
+    name: "check GitHub README existence via API",
+    pattern: &GITHUB_README_PATTERN,
+    rewrite: |mut request, captures| {
+        let owner = captures.name("owner").unwrap().as_str();
+        let repo = captures.name("repo").unwrap().as_str();
+        *request.url_mut() = Url::parse(
+            &format!("https://api.github.com/repos/{owner}/{repo}/readme")
+        ).unwrap();
+        request
+            .headers_mut()
+            .insert(header::ACCEPT, HeaderValue::from_static("application/vnd.github.v3+json"));
+        request
+    },
+},
+```
+
+The `branch` capture is intentionally discarded — the GitHub REST API returns the default-branch README, which is semantically correct for a root-level `#readme` fragment. The fragment bypass is implicit: by rewriting to an API URL that carries no fragment, lychee's downstream fragment checker never receives one to resolve.
+
+### Testing Notes
+
+**Run the quirk unit tests:**
+
+```bash
+cargo test -p lychee-lib -- quirks
+```
+
+**New tests added** (all inside `mod tests` in `quirks/mod.rs`):
+
+| Test | What it verifies |
+|------|-----------------|
+| `test_github_readme_pattern` (rstest, 4 cases) | Regex matches/rejects the correct URL shapes |
+| `test_github_readme_request` | URL is rewritten to `api.github.com/repos/.../readme` |
+| `test_github_readme_request_has_accept_header` | `Accept: application/vnd.github.v3+json` is set |
+| `test_github_readme_tree_branch_request` | `/tree/{branch}` variant rewrites correctly (branch discarded) |
+
+**Spot-check the API endpoint directly:**
+
+```bash
+curl -s -o /dev/null -w "%{http_code}" \
+  -H "Accept: application/vnd.github.v3+json" \
+  https://api.github.com/repos/lycheeverse/lychee/readme
+# Expected: 200
+```
+
+---
+
 ## Progress Log
 
 | Phase | Status | Notes |
 |-------|--------|-------|
 | Phase I — Issue Selection | ✅ Complete | Issue #2128 selected, fork created, comment posted, maintainer confirmed |
 | Phase II — Reproduce & Plan | ✅ Complete | Reproduction steps documented, solution plan finalized with maintainer directives |
-| Phase III — Implementation | 🔄 In Progress | Code changes in `quirks/mod.rs` |
-| Phase IV — PR Submission | ⏳ Upcoming | Submit PR to `lycheeverse/lychee` |
+| Phase III — Implementation | ✅ Complete | `quirks/mod.rs` updated, 4 new tests, branch pushed, PR submitted to upstream |
+| Phase IV — PR Submission | 🔄 In Progress | PR open at lycheeverse/lychee, awaiting maintainer review |
 
 ---
 
