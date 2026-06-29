@@ -206,8 +206,43 @@ curl -s -o /dev/null -w "%{http_code}" \
 |-------|--------|-------|
 | Phase I — Issue Selection | ✅ Complete | Issue #2128 selected, fork created, comment posted, maintainer confirmed |
 | Phase II — Reproduce & Plan | ✅ Complete | Reproduction steps documented, solution plan finalized with maintainer directives |
-| Phase III — Implementation | ✅ Complete | `quirks/mod.rs` updated, 4 new tests, branch pushed, PR submitted to upstream |
-| Phase IV — PR Submission | 🔄 In Progress | [PR #2239](https://github.com/lycheeverse/lychee/pull/2239) open, awaiting maintainer review |
+| Phase III — Implementation | ✅ Complete | `quirks/mod.rs` updated, tests added, branch pushed, PR submitted to upstream |
+| Phase IV — PR Submission | ✅ Complete | [PR #2239](https://github.com/lycheeverse/lychee/pull/2239) submitted and actively reviewed by @katrinafyi and @mre |
+
+---
+
+## Phase IV — Review Feedback & Changes
+
+PR #2239 received two rounds of detailed review from @katrinafyi (Member) and one review from @mre (owner). Below is a summary of the key feedback items and how each was addressed.
+
+### Round 1 — @katrinafyi
+
+| Feedback | Resolution |
+|----------|-----------|
+| Do not inject the GitHub token inside `Quirks` — add a dedicated chain handler in `website.rs` instead | Removed token injection from `Quirks`. Added `GitHubTokenHandler` implementing `Handler<Request, Status>` in `checker/website.rs`. It fires after Quirks has rewritten the URL to `api.github.com` and injects `Authorization: Bearer` only for requests targeting that host. |
+| Use `captures.expand()` for URL construction instead of `format!()` | Rewrote the Quirk's rewrite closure to use `captures.expand("https://api.github.com/repos/$owner/$repo/readme", &mut api_url)` for the base URL, then `Url::query_pairs_mut().append_pair("ref", branch.as_str())` for the optional branch parameter. This ensures correct percent-encoding of branch names. |
+| Fold the four separate README tests into a single rstest mapping input URL to expected output URL | Replaced the four individual test functions with one `#[rstest]` parameterized test (`test_github_readme_quirk`) covering base repo, branch, and non-matching cases. |
+| `GitHubTokenHandler` should hold `Option<String>` to keep the chain statically defined | Changed `token: String` to `token: Option<String>`. The default chain is now always `[Quirks, GitHubTokenHandler, RemapChainHandler, credentials, WebsiteChecker]` with no conditional pushes. |
+| Remove the mundane `GitHubTokenHandler` unit tests | Removed both `test_github_token_handler_injects_bearer_for_api_host` and `test_github_token_handler_skips_non_api_hosts`. |
+| CLI integration tests must exercise the fragment quirk logic and verify the `Authorization` header | The original tests used `--remap api.github.com [mock]` with a `github.com#readme` input, but `--remap` fires on the original URI in `Client::check()` before the chain runs, so the mock never received the Quirks-rewritten URL. Fixed by adding `RemapChainHandler` to the chain (after `GitHubTokenHandler`) so remaps are also applied post-Quirks. The original test structure was restored: wiremock asserts on the `Authorization: Bearer` and `Accept` headers. |
+| Branch capture group `[^/]+` does not allow `/` in branch names | Opened a design discussion (see thread). `[^#]+` was initially tried but is incorrect because it conflates path segments with the branch name. Reverted to `[^/]+` — URLs with slash-containing branch names fall through to a normal HTTP check, which is the safe and honest behavior given the ambiguity. |
+
+### Round 2 — @mre (owner)
+
+@mre reviewed the changes, indicated they would not mind merging, and asked for clarification on why `GitHubTokenHandler` and `RemapChainHandler` were needed. A response has been drafted and posted on the PR thread.
+
+---
+
+## Final Architecture
+
+The PR touches four files:
+
+| File | Change |
+|------|--------|
+| `lychee-lib/src/quirks/mod.rs` | New `GITHUB_README_PATTERN` regex and `Quirk` that rewrites `github.com/owner/repo#readme` to the GitHub Readme API endpoint using `captures.expand()` and `query_pairs_mut()` |
+| `lychee-lib/src/checker/website.rs` | `GitHubTokenHandler` (Bearer injection post-Quirks) and `RemapChainHandler` (applies remaps after Quirks for integration test interception); static chain definition |
+| `lychee-lib/src/client.rs` | Passes `remaps` to `WebsiteChecker::new()` so `RemapChainHandler` can access them |
+| `lychee-bin/tests/cli.rs` | Integration tests using wiremock that assert on `Authorization: Bearer` and `Accept: application/vnd.github.v3+json` headers end-to-end |
 
 ---
 
